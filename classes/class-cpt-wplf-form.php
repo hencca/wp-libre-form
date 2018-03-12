@@ -27,12 +27,13 @@ class CPT_WPLF_Form {
     add_action( 'save_post', array( $this, 'save_cpt' ) );
     add_filter( 'content_save_pre', array( $this, 'strip_form_tags' ), 10, 1 );
     add_action( 'add_meta_boxes', array( $this, 'add_meta_boxes_cpt' ) );
+    add_action( 'add_meta_boxes', array( $this, 'maybe_load_imported_template' ), 10, 2 );
     add_action( 'admin_enqueue_scripts', array( $this, 'admin_post_scripts_cpt' ), 10, 1 );
 
     // edit.php view
     add_filter( 'post_row_actions', array( $this, 'remove_row_actions' ), 10, 2 );
     add_filter( 'manage_edit-wplf-form_columns', array( $this, 'custom_columns_cpt' ), 100, 1 );
-    add_action( 'manage_posts_custom_column', array( $this, 'custom_columns_display_cpt' ), 10, 2 );
+    add_action( 'manage_wplf-form_posts_custom_column', array( $this, 'custom_columns_display_cpt' ), 10, 2 );
 
     add_filter( 'default_content', array( $this, 'default_content_cpt' ) );
     add_filter( 'user_can_richedit', array( $this, 'disable_tinymce' ) );
@@ -104,7 +105,7 @@ class CPT_WPLF_Form {
   /**
    * Modify post.php permalink html to show notice if form isn't publicly visible.
    */
-  function modify_permalink_html( $html, $post_id ) {
+  public function modify_permalink_html( $html, $post_id ) {
     $publicly_visible = $this->get_publicly_visible_state( $post_id );
 
     if ( get_post_type( $post_id ) === 'wplf-form' && ! $publicly_visible ) {
@@ -119,7 +120,7 @@ class CPT_WPLF_Form {
   /**
    * Disable TinyMCE editor for forms, which are simple HTML things
    */
-  function disable_tinymce( $default ) {
+  public function disable_tinymce( $default ) {
     global $post;
 
     // only for this cpt
@@ -131,9 +132,9 @@ class CPT_WPLF_Form {
   }
 
   /**
-   * Include custom JS on the edit screen
+   * Include custom JS and CSS on the edit screen
    */
-  function admin_post_scripts_cpt( $hook ) {
+  public function admin_post_scripts_cpt( $hook ) {
     global $post;
 
     // make sure we're on the correct view
@@ -146,15 +147,20 @@ class CPT_WPLF_Form {
       return;
     }
 
+    $assets_url = plugins_url( 'assets', dirname( __FILE__ ) );
+
     // enqueue the custom JS for this view
-    wp_enqueue_script( 'wplf-form-edit-js', plugins_url( 'assets/scripts/wplf-admin-form.js', dirname( __FILE__ ) ) );
+    wp_enqueue_script( 'wplf-form-edit-js', $assets_url . '/scripts/wplf-admin-form.js' );
+
+    // enqueue the custom CSS for this view
+    wp_enqueue_style( 'wplf-form-edit-css', $assets_url . '/styles/wplf-admin-form.css' );
   }
 
 
   /**
    * Pre-populate form editor with default content
    */
-  function default_content_cpt( $content ) {
+  public function default_content_cpt( $content ) {
     global $pagenow;
 
     // only on post.php screen
@@ -205,7 +211,7 @@ class CPT_WPLF_Form {
   /**
    * Custom columns in edit.php for Forms
    */
-  function custom_columns_cpt( $columns ) {
+  public function custom_columns_cpt( $columns ) {
     $new_columns = array(
       'cb' => $columns['cb'],
       'title' => $columns['title'],
@@ -220,7 +226,7 @@ class CPT_WPLF_Form {
   /**
    * Custom column display for Form CPT in edit.php
    */
-  function custom_columns_display_cpt( $column, $post_id ) {
+  public function custom_columns_display_cpt( $column, $post_id ) {
     if ( 'shortcode' === $column ) {
 ?>
 <input type="text" class="code" value='[libre-form id="<?php echo intval( $post_id ); ?>"]' readonly>
@@ -247,7 +253,7 @@ class CPT_WPLF_Form {
   /**
    * Add meta box to show fields in form
    */
-  function add_meta_boxes_cpt() {
+  public function add_meta_boxes_cpt() {
     // Shortcode meta box
     add_meta_box(
       'wplf-shortcode',
@@ -301,7 +307,7 @@ class CPT_WPLF_Form {
   /**
    * Meta box callback for shortcode meta box
    */
-  function metabox_shortcode( $post ) {
+  public function metabox_shortcode( $post ) {
 ?>
 <p><input type="text" class="code" value='[libre-form id="<?php echo esc_attr( $post->ID ); ?>"]' readonly></p>
 <?php
@@ -333,7 +339,7 @@ class CPT_WPLF_Form {
   /**
    * Meta box callback for form fields meta box
    */
-  function metabox_form_fields() {
+  public function metabox_form_fields() {
 ?>
 <p><?php esc_html_e( 'Fields marked with * are required', 'wp-libre-form' ); ?></p>
 <div class="wplf-form-field-container">
@@ -347,7 +353,7 @@ class CPT_WPLF_Form {
   /**
    * Meta box callback for submit email meta box
    */
-  function metabox_submit_email( $post ) {
+  public function metabox_submit_email( $post ) {
     // get post meta
     $meta = get_post_meta( $post->ID );
     $email_enabled = isset( $meta['_wplf_email_copy_enabled'] ) ? $meta['_wplf_email_copy_enabled'][0] : true;
@@ -438,7 +444,7 @@ class CPT_WPLF_Form {
   /**
    * Meta box callback for submission title format
    */
-  function meta_box_title_format( $post ) {
+  public function meta_box_title_format( $post ) {
     // get post meta
     $meta = get_post_meta( $post->ID );
     $default = '%name% <%email%>'; // default submission title format
@@ -461,9 +467,141 @@ class CPT_WPLF_Form {
   }
 
   /**
+   * Check and maybe load a static HTML template for a specific form.
+   *
+   * Hooked to `add_meta_boxes`.
+   *
+   * @param string $post_type Post type for which editor is being rendered for.
+   * @param \WP_Post $post Current post object.
+   *
+   * @return void
+   */
+  function maybe_load_imported_template( $post_type, $post ) {
+    if ( $post_type !== 'wplf-form' || $post->post_status === 'auto-draft' ) {
+      return;
+    }
+
+    $form_id = (int) $post->ID;
+
+    /**
+     * Allows importing a static HTML template for a specific form ID.
+     *
+     * If the template returned is `null` then no template is loaded.
+     *
+     * @param string|null $template_content Raw HTML to import for a form.
+     * @param int $form_id Form ID (WP_Post ID) to import template for.
+     */
+    $template_content = apply_filters( 'wplf_import_html_template', null, $form_id );
+
+    if ( $template_content === null ) {
+      return;
+    }
+
+    // Clear unwanted form tags. WPLF will insert those by itself when rendering a form.
+    $template_content = preg_replace( '%<form ?[^>]*?>%', '', $template_content );
+    $template_content = preg_replace( '%</form>%', '', $template_content );
+
+    $this->override_form_template( $template_content, $form_id );
+  }
+
+  /**
+   * Override a form's template with an imported template file.
+   *
+   * @param string $template_content Raw HTML content to use for the form content.
+   * @param int $form_id ID of form we're overriding the template for.
+   *
+   * @return void
+   */
+  protected function override_form_template( $template_content, $form_id ) {
+    $this->maybe_persist_override_template( $template_content, $form_id );
+
+    static $times_content_replaced = 0;
+
+    // Make the editor textarea uneditable.
+    add_filter( 'the_editor', function ( $editor ) {
+      if ( ! preg_match( '%id="wp-content-editor-container"%', $editor ) ) {
+        return $editor;
+      }
+
+      $editor = preg_replace( '%\<textarea %', '<textarea readonly="readonly" ', $editor );
+
+      $notice = _x(
+        'This form template is being overridden by code, you must edit it in your project code',
+        'Template override notice in form edit admin view',
+        'wp-libre-form'
+      );
+
+      $notice = sprintf( '<div class="wplf-template-override-notice">%s</div>', $notice );
+
+      return $notice . $editor;
+    } );
+
+    // Custom settings for the form editor.
+    add_filter( 'wp_editor_settings', function ( $settings, $editor_id ) {
+      if ( $editor_id !== 'content' ) {
+          return $settings;
+      }
+
+      $settings['tinymce'] = false;
+      $settings['quicktags'] = false;
+      $settings['media_buttons'] = false;
+
+      return $settings;
+    }, 10, 2 );
+
+    // Replace all editor content with template content.
+    add_filter( 'the_editor_content', function ( $content ) use ( $template_content, &$times_content_replaced ) {
+      // This is hacky, yes. We only want to override the content for the first
+      // editor field we come by, meaning 99% of the time we hit the wanted form
+      // template editor field at the top of the edit view page.
+      if ( $times_content_replaced > 0 ) {
+        return $content;
+      }
+
+      $times_content_replaced++;
+
+      return $template_content;
+    } );
+  }
+
+  /**
+   * Check if we need to auto-persist the form template override into WP database.
+   *
+   * @param string $template Template to maybe persist.
+   * @param int $form_id Form ID to persist template for.
+   * @param bool $force Force a persist even though not required?
+   *
+   * @return void
+   */
+  protected function maybe_persist_override_template( $template, $form_id, $force = false ) {
+    $hash_transient = 'wplf_form_tmpl_hash_' . $form_id;
+    $template_hash = md5( $template );
+    $stored_hash = get_transient( $hash_transient );
+
+    if ( ! $force && $template_hash === $stored_hash ) {
+      return;
+    }
+
+    // Safe-guard to prevent accidental infinite loops.
+    remove_action( 'save_post', array( $this, 'save_cpt' ) );
+
+    $updated = wp_update_post( array(
+      'ID' => (int) $form_id,
+      'post_content' => $template,
+    ) );
+
+    add_action( 'save_post', array( $this, 'save_cpt' ) );
+
+    // Maybe we should do something else than just silently fail if persisting failed above.
+    if ( $updated ) {
+        set_transient( $hash_transient, $template_hash, HOUR_IN_SECONDS * 8 );
+    }
+  }
+
+  /**
    * Handles saving our post meta
    */
-  function save_cpt( $post_id ) {
+  public function save_cpt( $post_id ) {
     // verify nonce
     if ( ! isset( $_POST['wplf_form_meta_nonce'] ) ) {
       return;
@@ -577,7 +715,7 @@ class CPT_WPLF_Form {
    *
    * We apply <form> via the shortcode, you can't have nested forms anyway
    */
-  function strip_form_tags( $content ) {
+  public function strip_form_tags( $content ) {
     return preg_replace( '/<\/?form.*>/i', '', $content );
   }
 
@@ -585,10 +723,11 @@ class CPT_WPLF_Form {
   /**
    * The function we display the form with
    */
-  function wplf_form( $id, $content = '', $xclass = '', $attributes = [] ) {
+  public function wplf_form( $id, $content = '', $xclass = '', $attributes = [] ) {
     global $post;
+    $preview = ! empty( $_GET['preview'] ) ? $_GET['preview'] : false;
 
-    if ( 'publish' === get_post_status( $id ) || 'true' === $_GET['preview'] ) {
+    if ( 'publish' === get_post_status( $id ) || $preview ) {
       $form = get_post( $id );
       if ( empty( $content ) ) {
         // you can override the content via parameter
@@ -663,7 +802,7 @@ class CPT_WPLF_Form {
   /**
    * Enqueue the front end JS
    */
-  function maybe_enqueue_frontend_script() {
+  public function maybe_enqueue_frontend_script() {
     global $post;
 
     // register the script, but only enqueue it if the current post contains a form in it
@@ -687,7 +826,7 @@ class CPT_WPLF_Form {
   /**
    * Shortcode for displaying a Form
    */
-  function shortcode( $shortcode_atts, $content = null ) {
+  public function shortcode( $shortcode_atts, $content = null ) {
     $attributes = shortcode_atts( array(
       'id' => null,
       'xclass' => '',
@@ -709,7 +848,7 @@ class CPT_WPLF_Form {
   /**
    * Use the shortcode for previewing forms
    */
-  function use_shortcode_for_preview( $content ) {
+  public function use_shortcode_for_preview( $content ) {
     global $post;
     if ( ! isset( $post->post_type ) || $post->post_type !== 'wplf-form' ) {
       return $content;
@@ -721,7 +860,7 @@ class CPT_WPLF_Form {
    * Set and show 404 page for visitors trying to see single form.
    * And yes, it is a global $post. That's right.
    */
-  function maybe_set_404_for_single_form() {
+  public function maybe_set_404_for_single_form() {
     global $post;
 
     if ( ! is_singular( 'wplf-form' ) ) {
@@ -742,14 +881,14 @@ class CPT_WPLF_Form {
   /**
    * Wrapper function to check if form is publicly visible.
    */
-  function get_publicly_visible_state( $id ) {
+  public function get_publicly_visible_state( $id ) {
     return apply_filters( 'wplf-form-publicly-visible', false, $id );
   }
 
   /**
    * A very simple uglify. Just removes line breaks from html
    */
-  function minify_html( $html ) {
+  public function minify_html( $html ) {
     return str_replace( array( "\n", "\r" ), ' ', $html );
   }
 }
